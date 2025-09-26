@@ -17,6 +17,8 @@ type ProductHandler struct {
 	ProductSvc *service.ProductService
 }
 
+var File_cache = make(map[string][]byte)
+
 func NewProductHandler(svc *service.ProductService) *ProductHandler {
 	return &ProductHandler{ProductSvc: svc}
 }
@@ -138,13 +140,22 @@ func (h *ProductHandler) GetImage(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
+	//w.Header().Set("Cache-Control", "public, max-age=3600")
 
+	//TODO: cache images
+	if fdata, ok :=  File_cache[fullPath]; ok {
+		fmt.Printf("file in the cache!!!!\n")
+		w.Write(fdata)
+		return
+	}
+	
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		fmt.Printf("画像ファイルの読み込みに失敗: %s\n", fullPath)
 		http.Error(w, "画像の読み込みに失敗しました", http.StatusInternalServerError)
 		return
 	}
+	File_cache[fullPath]= data
 
 	w.Write(data)
 }
