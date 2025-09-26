@@ -32,7 +32,7 @@ func UserAuthMiddleware(sessionRepo *repository.SessionRepository) func(http.Han
 				ctx := context.WithValue(r.Context(), userContextKey, uid)
 				next.ServeHTTP(w, r.WithContext(ctx))
 			} else {
-				userID, err := sessionRepo.FindUserBySessionID(r.Context(), sessionID)
+				userID, err := sessionRepo.FindUserBySessionID(sessionID)
 				if err != nil {
 					log.Printf("Error finding user by session ID: %v", err)
 					http.Error(w, "Unauthorized: Invalid session", http.StatusUnauthorized)
