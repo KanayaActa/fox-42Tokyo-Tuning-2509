@@ -56,21 +56,24 @@ func (s *RobotService) UpdateOrderStatus(ctx context.Context, orderID int64, new
 	})
 }
 
-func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID string, robotCapacity int) (model.DeliveryPlan, error) {
-	n, W := len(orders), robotCapacity
+func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID string, capacity int) (model.DeliveryPlan, error) {
+	n, W := len(orders), capacity
 	if n == 0 || W <= 0 {
-		return model.DeliveryPlan{RobotID: robotID}, nil
+		return model.DeliveryPlan{
+            RobotID: robotID,
+            Orders:  []model.Order{}, // ★ nil ではなく空スライス
+        }, nil
 	}
 
-	// 早期リターン：全部載るならそのまま返す
+	// 早期：全部載る
 	sumW, sumV := 0, 0
 	for _, o := range orders {
 		sumW += o.Weight
 		sumV += o.Value
 	}
 	if sumW <= W {
-		best := make([]model.Order, 0, n)
-		best = append(best, orders...)
+		best := make([]model.Order, n)
+		copy(best, orders)
 		return model.DeliveryPlan{
 			RobotID:     robotID,
 			TotalWeight: sumW,
@@ -79,40 +82,48 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 		}, nil
 	}
 
-	// GCD圧縮（重さ単位を圧縮：解は不変でループが速くなる）
+	// === GCD圧縮（入力は破壊しない） ===
 	g := 0
-	for _, o := range orders {
+	wts := make([]int, n)
+	vals := make([]int, n)
+	for i, o := range orders {
+		wts[i], vals[i] = o.Weight, o.Value
 		if o.Weight > 0 {
 			g = gcd(g, o.Weight)
 		}
 	}
 	if g > 1 {
-		for i := range orders {
-			if orders[i].Weight > 0 {
-				orders[i].Weight /= g
+		for i := range wts {
+			if wts[i] > 0 {
+				wts[i] /= g
 			}
 		}
-		W /= g
+		W /= g // gで割った容量（floor）。可行集合は不変。
+	}
+	if W < 0 {
+		W = 0
 	}
 
-	// 1D DP（価値最大）
-	dp := make([]int, W+1)
-	const none = -1
-	pick := make([]int, W+1) // dp[w] を最後に更新した item index
-	prev := make([]int, W+1) // そのときの遷移元容量
-	for w := 0; w <= W; w++ {
-		pick[w], prev[w] = none, none
+	// === 2行DP（prev/cur） + chooseビットセット（復元用） ===
+	dpPrev := make([]int, W+1)
+	dpCur := make([]int, W+1)
+
+	// choose[i] は「i番目（1..n）のアイテムを取ったとき true」の重さw集合（ビットセット）
+	words := (W>>6 + 1)
+	choose := make([][]uint64, n+1) // 0行目は未使用
+	for i := 0; i <= n; i++ {
+		choose[i] = make([]uint64, words)
 	}
 
-	// 到達性 bitset（w 到達済みか）: 64bit words
-	words := (W >> 6) + 1
-	reach := make([]uint64, words)
-	reach[0] = 1 // w=0 到達
+	// 到達性（prev行の到達 w を保持）。reachPrev[0] の bit0 = w=0
+	reachPrev := make([]uint64, words)
+	reachPrev[0] = 1
+	reachHiPrev := 0
 
-	reachHi := 0     // これまでの到達最大容量
-	poll := 8192     // ctx ポーリング間引き
+	const checkEvery = 8192
+	steps := 0
+
 	maskUpTo := func(max int) uint64 {
-		// 下位 (max%64 + 1)bit を 1 にしたマスク
 		m := uint(max & 63)
 		if m == 63 {
 			return ^uint64(0)
@@ -120,103 +131,92 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 		return (uint64(1) << (m + 1)) - 1
 	}
 
-	for i := 0; i < n; i++ {
-		itW, itV := orders[i].Weight, orders[i].Value
-		if itW <= 0 || itV < 0 || itW > W {
-			continue
-		}
+	for i := 1; i <= n; i++ {
+		wt, val := wts[i-1], vals[i-1]
+		// デフォルトは「選ばない」→ dpCur = dpPrev
+		copy(dpCur, dpPrev)
 
-		// 今回の上限 w：これまでの到達上限 + itW （W を超えない）
-		upper := reachHi + itW
-		if upper > W {
-			upper = W
-		}
-		if upper < itW {
-			continue
-		}
+		// 今回の到達性（次の行）
+		reachCur := make([]uint64, words)
+		copy(reachCur, reachPrev)
+		reachHiCur := reachHiPrev
 
-		// 到達スナップショット（このアイテムの“前”だけを使う＝多重選択防止）
-		snap := make([]uint64, words)
-		copy(snap, reach)
-
-		// base = w - itW の最大値（= upper - itW）までの到達のみ列挙
-		baseMax := upper - itW
-		lastWord := baseMax >> 6
-
-		// 降順で set bit を列挙（w を降順に更新）
-		for wi := lastWord; wi >= 0; wi-- {
-			word := snap[wi]
-			if wi == lastWord {
-				// 最後のワードは baseMax までにマスク
-				word &= maskUpTo(baseMax)
+		if wt > 0 && wt <= W && val >= 0 {
+			// base を列挙：w = base + wt が W 以内
+			baseMax := reachHiPrev
+			if baseMax > W-wt {
+				baseMax = W - wt
 			}
-			for word != 0 {
-				// ワード内の最上位 set bit を取り出す
-				b := bits.Len64(word) - 1 // 0..63
-				base := (wi << 6) + b
-				w := base + itW
-
-				// ctx.Done() の間引きチェック
-				poll--
-				if poll == 0 {
-					poll = 8192
-					select {
-					case <-ctx.Done():
-						return model.DeliveryPlan{}, ctx.Err()
-					default:
+			if baseMax >= 0 {
+				lastWord := baseMax >> 6
+				for wi := lastWord; wi >= 0; wi-- {
+					word := reachPrev[wi]
+					if wi == lastWord {
+						word &= maskUpTo(baseMax)
 					}
-				}
+					for word != 0 {
+						// ワード内の最上位 set bit
+						b := bits.Len64(word) - 1
+						base := (wi << 6) + b
+						w := base + wt
 
-				// 通常の 0/1 ナップサック更新（同値は更新しない＝skip-first）
-				nv := dp[base] + itV
-				if nv > dp[w] {
-					dp[w] = nv
-					pick[w] = i
-					prev[w] = base
-					// 到達性の更新
-					wp := w >> 6
-					bp := uint(w & 63)
-					if (reach[wp]>>bp)&1 == 0 {
-						reach[wp] |= (uint64(1) << bp)
-						if w > reachHi {
-							reachHi = w
+						steps++
+						if steps%checkEvery == 0 {
+							select {
+							case <-ctx.Done():
+								return model.DeliveryPlan{}, ctx.Err()
+							default:
+							}
 						}
+
+						// 同値は更新しない（= スキップ優先、DFSと一致）
+						if nv := dpPrev[base] + val; nv > dpCur[w] {
+							dpCur[w] = nv
+							// choose[i][w] を true に
+							choose[i][w>>6] |= (uint64(1) << uint(w&63))
+							// 到達性更新
+							wp, bp := w>>6, uint(w&63)
+							if (reachCur[wp]>>bp)&1 == 0 {
+								reachCur[wp] |= (uint64(1) << bp)
+								if w > reachHiCur {
+									reachHiCur = w
+								}
+							}
+						}
+						// 最上位bitを落とす
+						word &^= (uint64(1) << uint(b))
 					}
 				}
-				// 最上位ビットを落とす
-				word &^= (uint64(1) << uint(b))
 			}
 		}
+
+		// 行入替
+		dpPrev, dpCur = dpCur, dpPrev
+		reachPrev, reachHiPrev = reachCur, reachHiCur
 	}
 
-	// 最大価値は dp[W]
-	bestValue := dp[W]
-	// その最大価値を達成する「最大の重さ」から復元開始（持ち上げ対策）
+	// 最終価値と、最大価値を達成する「最大の重さ」bestW（持ち上げ対策）
+	bestValue := dpPrev[W]
 	bestW := W
 	for w := W; w >= 0; w-- {
-		if dp[w] == bestValue {
+		if dpPrev[w] == bestValue {
 			bestW = w
 			break
 		}
 	}
 
-	// pick[w] がない“持ち上げ区間”は w-- で飛ばし、更新点でのみ遡る
-	selected := make([]bool, n)
+	// 復元：choose を i=n..1 で逆に辿る（wは圧縮容量）
 	w := bestW
-	for w > 0 {
-		if pick[w] == none {
-			w--
-			continue
+	selected := make([]bool, n)
+	for i := n; i >= 1 && w >= 0; i-- {
+		row := choose[i]
+		if ((row[w>>6] >> uint(w&63)) & 1) == 1 {
+			selected[i-1] = true
+			w -= wts[i-1]
 		}
-		i := pick[w]
-		if selected[i] {
-			break // 念のため
-		}
-		selected[i] = true
-		w = prev[w]
 	}
 
-	// 返却は入力順（DFSの順序性に合わせる）
+	// 返却（入力順）。重さは元単位に戻す。
 	bestSet := make([]model.Order, 0)
 	totalWeight := 0
 	for i := 0; i < n; i++ {
@@ -226,15 +226,7 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 		}
 	}
 
-	// GCD圧縮の重さを元に戻す（外部仕様が元単位なら）
-	if g > 1 {
-		totalWeight *= g
-		for i := range bestSet {
-			bestSet[i].Weight *= g
-		}
-	}
-
-	// 最後のキャンセル確認
+	// 最後にキャンセルチェック
 	select {
 	case <-ctx.Done():
 		return model.DeliveryPlan{}, ctx.Err()
@@ -243,9 +235,9 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 
 	return model.DeliveryPlan{
 		RobotID:     robotID,
-		TotalWeight: totalWeight,
-		TotalValue:  bestValue,
-		Orders:      bestSet,
+		TotalWeight: totalWeight,  // 例: 50
+		TotalValue:  bestValue,    // 例: 236
+		Orders:      bestSet,      // 期待のorder集合
 	}, nil
 }
 
