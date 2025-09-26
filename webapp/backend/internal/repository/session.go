@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 	"time"
-
+	"fmt"
 	"github.com/google/uuid"
 )
 
@@ -34,6 +34,7 @@ func (r *SessionRepository) Create(ctx context.Context, userBusinessID int, dura
 
 // セッションIDからユーザーIDを取得
 func (r *SessionRepository) FindUserBySessionID(ctx context.Context, sessionID string) (int, error) {
+	fmt.Println("called query for user!\n")
 	var userID int
 	query := `
 		SELECT 
