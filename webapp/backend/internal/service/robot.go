@@ -55,19 +55,24 @@ func (s *RobotService) UpdateOrderStatus(ctx context.Context, orderID int64, new
 	})
 }
 
+type key struct {
+	i         int
+	curWeight int
+}
+
 func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID string, robotCapacity int) (model.DeliveryPlan, error) {
 	n := len(orders)
 	bestValue := 0
 	var bestSet []model.Order
 	steps := 0
 	checkEvery := 16384
+	memo := make(map[key]bool)
 
 	var dfs func(i, curWeight, curValue int, curSet []model.Order) bool
 	dfs = func(i, curWeight, curValue int, curSet []model.Order) bool {
 		if curWeight > robotCapacity {
 			return false
 		}
-		steps++
 		if checkEvery > 0 && steps%checkEvery == 0 {
 			select {
 			case <-ctx.Done():
@@ -75,6 +80,14 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 			default:
 			}
 		}
+		steps++
+
+		k := key{i, curWeight}
+		if _, ok := memo[k]; ok {
+			return false
+		}
+		memo[k] = true
+
 		if i == n {
 			if curValue > bestValue {
 				bestValue = curValue
@@ -108,3 +121,4 @@ func selectOrdersForDelivery(ctx context.Context, orders []model.Order, robotID 
 		Orders:      bestSet,
 	}, nil
 }
+
