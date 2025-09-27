@@ -118,9 +118,9 @@ services:
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./images:/app/images:ro
       - /da/tls:/da/tls:ro
-      - nginx_cache:/var/cache/nginx
+      # - ./images:/app/images:ro  # 一時的に無効化
+      # - nginx_cache:/var/cache/nginx  # 一時的に無効化
     networks:
       - webapp-network
     depends_on:
@@ -153,8 +153,8 @@ networks:
     external: true
 
 # ----------------------------------------------------
-# ボリューム定義: データ永続化
+# ボリューム定義: データ永続化（一時的に無効化）
 # ----------------------------------------------------
-volumes:
-  nginx_cache:
-    driver: local
+# volumes:
+#   nginx_cache:
+#     driver: local
