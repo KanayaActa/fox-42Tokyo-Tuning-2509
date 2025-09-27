@@ -16,22 +16,22 @@ func NewProductRepository(db DBTX) *ProductRepository {
 // 商品一覧を取得し、SQLでページング処理を行う
 func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req model.ListRequest) ([]model.Product, int, error) {
 	var products []model.Product
-	
-	// まず総件数を取得
-	countQuery := "SELECT COUNT(*) FROM products"
-	countArgs := []interface{}{}
-	
-	if req.Search != "" {
-		countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := "%" + req.Search + "%"
-		countArgs = append(countArgs, searchPattern, searchPattern)
-	}
-	
 	var total int
-	err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
+	// // まず総件数を取得
+	// countQuery := "SELECT COUNT(*) FROM products"
+	// countArgs := []interface{}{}
+	
+	// if req.Search != "" {
+	// 	countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
+	// 	searchPattern := "%" + req.Search + "%"
+	// 	countArgs = append(countArgs, searchPattern, searchPattern)
+	// }
+	
+	
+	// err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
+	// if err != nil {
+	// 	return nil, 0, err
+	// }
 	
 	// データを取得（プレースホルダーを使用してSQLインジェクションを防止）
 	baseQuery := `
@@ -66,10 +66,10 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 	baseQuery += " ORDER BY " + req.SortField + " " + req.SortOrder + ", product_id ASC LIMIT ? OFFSET ?"
 	args = append(args, req.PageSize, req.Offset)
 
-	err = r.db.SelectContext(ctx, &products, baseQuery, args...)
+	err := r.db.SelectContext(ctx, &products, baseQuery, args...)
 	if err != nil {
 		return nil, 0, err
 	}
-
+	total = len(products)
 	return products, total, nil
 }
