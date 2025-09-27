@@ -30,25 +30,19 @@ func (s *ProductService) CreateOrders(ctx context.Context, userID int, items []m
 			return nil
 		}
 
-		// 全ての注文をスライスに格納
-		var orders []*model.Order
 		for pID, quantity := range itemsToProcess {
 			for i := 0; i < quantity; i++ {
 				order := &model.Order{
 					UserID:    userID,
 					ProductID: pID,
 				}
-				orders = append(orders, order)
+				orderID, err := txStore.OrderRepo.Create(ctx, order)
+				if err != nil {
+					return err
+				}
+				insertedOrderIDs = append(insertedOrderIDs, orderID)
 			}
 		}
-
-		// バッチINSERTで一括作成
-		orderIDs, err := txStore.OrderRepo.CreateBatch(ctx, orders)
-		if err != nil {
-			return err
-		}
-		insertedOrderIDs = orderIDs
-		
 		return nil
 	})
 

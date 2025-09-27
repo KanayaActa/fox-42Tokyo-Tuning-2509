@@ -19,60 +19,18 @@ func NewOrderRepository(db DBTX) *OrderRepository {
 	return &OrderRepository{db: db}
 }
 
-// 複数の注文を一括作成し、生成された注文IDのスライスを返す
-func (r *OrderRepository) CreateBatch(ctx context.Context, orders []*model.Order) ([]string, error) {
-	if len(orders) == 0 {
-		return []string{}, nil
-	}
-
-	// バッチINSERT用のクエリを構築
-	query := `INSERT INTO orders (user_id, product_id, shipped_status, created_at) VALUES `
-	placeholders := make([]string, len(orders))
-	args := make([]interface{}, 0, len(orders)*4)
-
-	for i, order := range orders {
-		placeholders[i] = "(?, ?, 'shipping', NOW())"
-		args = append(args, order.UserID, order.ProductID)
-	}
-
-	query += strings.Join(placeholders, ", ")
-
-	result, err := r.db.ExecContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	// 最初のIDを取得
-	firstID, err := result.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-
-	// 連続するIDのスライスを生成
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-
-	orderIDs := make([]string, rowsAffected)
-	for i := int64(0); i < rowsAffected; i++ {
-		orderIDs[i] = fmt.Sprintf("%d", firstID+i)
-	}
-
-	return orderIDs, nil
-}
-
-// 注文を作成し、生成された注文IDを返す（単一注文用）
+// 注文を作成し、生成された注文IDを返す
 func (r *OrderRepository) Create(ctx context.Context, order *model.Order) (string, error) {
-	// 単一注文をバッチメソッドで処理
-	orderIDs, err := r.CreateBatch(ctx, []*model.Order{order})
+	query := `INSERT INTO orders (user_id, product_id, shipped_status, created_at) VALUES (?, ?, 'shipping', NOW())`
+	result, err := r.db.ExecContext(ctx, query, order.UserID, order.ProductID)
 	if err != nil {
 		return "", err
 	}
-	if len(orderIDs) == 0 {
-		return "", fmt.Errorf("no order ID generated")
+	id, err := result.LastInsertId()
+	if err != nil {
+		return "", err
 	}
-	return orderIDs[0], nil
+	return fmt.Sprintf("%d", id), nil
 }
 
 // 複数の注文IDのステータスを一括で更新
