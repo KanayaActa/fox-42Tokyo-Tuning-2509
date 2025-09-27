@@ -23,7 +23,7 @@ func UserAuthMiddleware(sessionRepo *repository.SessionRepository) func(http.Han
 			}
 			sessionID := cookie.Value
 
-			userID, err := sessionRepo.FindUserBySessionID(r.Context(), sessionID)
+			userID, err := sessionRepo.FindUserBySessionID(sessionID)
 			if err != nil {
 				log.Printf("Error finding user by session ID: %v", err)
 				http.Error(w, "Unauthorized: Invalid session", http.StatusUnauthorized)

@@ -64,7 +64,7 @@ func (s *AuthService) Login(ctx context.Context, userName, password string) (str
 		}
 
 		sessionDuration := 24 * time.Hour
-		sessionID, expiresAt, err = s.store.SessionRepo.Create(ctx, user.UserID, sessionDuration)
+		sessionID, expiresAt, err = s.store.SessionRepo.Create(user.UserID, sessionDuration)
 		if err != nil {
 			log.Printf("[Login] セッション生成失敗: %v", err)
 			return ErrInternalServer
