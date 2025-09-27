@@ -65,30 +65,31 @@ func (r *OrderRepository) GetShippingOrders(ctx context.Context) ([]model.Order,
 
 // 注文履歴一覧を取得
 func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.ListRequest) ([]model.Order, int, error) {
-	// まず総件数を取得（COUNT(*)を使用）
-	countQuery := `
-        SELECT COUNT(*)
-        FROM orders o
-        JOIN products p ON o.product_id = p.product_id
-        WHERE o.user_id = ?`
-	
-	countArgs := []interface{}{userID}
-	
-	// 検索条件があれば追加
-	if req.Search != "" {
-		if req.Type == "prefix" {
-			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, req.Search+"%")
-		} else {
-			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, "%"+req.Search+"%")
-		}
-	}
-
 	var total int
-	if err := r.db.GetContext(ctx, &total, countQuery, countArgs...); err != nil {
-		return nil, 0, err
-	}
+	// // まず総件数を取得（COUNT(*)を使用）
+	// countQuery := `
+    //     SELECT COUNT(*)
+    //     FROM orders o
+    //     JOIN products p ON o.product_id = p.product_id
+    //     WHERE o.user_id = ?`
+	
+	// countArgs := []interface{}{userID}
+	
+	// // 検索条件があれば追加
+	// if req.Search != "" {
+	// 	if req.Type == "prefix" {
+	// 		countQuery += " AND p.name LIKE ?"
+	// 		countArgs = append(countArgs, req.Search+"%")
+	// 	} else {
+	// 		countQuery += " AND p.name LIKE ?"
+	// 		countArgs = append(countArgs, "%"+req.Search+"%")
+	// 	}
+	// }
+
+	
+	// if err := r.db.GetContext(ctx, &total, countQuery, countArgs...); err != nil {
+	// 	return nil, 0, err
+	// }
 
 	// メインクエリ
 	query := `
@@ -142,6 +143,7 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 	if err := r.db.SelectContext(ctx, &ordersRaw, query, args...); err != nil {
 		return nil, 0, err
 	}
+	total = len(ordersRaw) // lol kek
 
 	var orders []model.Order
 	for _, o := range ordersRaw {
