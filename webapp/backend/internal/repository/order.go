@@ -123,7 +123,7 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 			countArgs = append(countArgs, req.Search+"%")
 		} else {
 			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, "%"+req.Search+"%")
+			countArgs = append(countArgs, req.Search+"%")
 		}
 	}
 
@@ -148,7 +148,7 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 			args = append(args, req.Search+"%")
 		} else {
 			query += " AND p.name LIKE ?"
-			args = append(args, "%"+req.Search+"%")
+			args = append(args, req.Search+"%")
 		}
 	}
 
