@@ -107,6 +107,24 @@ services:
       retries: 10
       start_period: 1000s
   # ----------------------------------------------------
+  # Nginx キャッシュ初期化: キャッシュディレクトリの作成
+  # ----------------------------------------------------
+  nginx-cache-init:
+    container_name: tuning-nginx-cache-init
+    image: 42tokyo2508.azurecr.io/nginx:latest
+    command: >
+      sh -c "
+        mkdir -p /var/cache/nginx &&
+        chown -R nginx:nginx /var/cache/nginx &&
+        chmod -R 755 /var/cache/nginx &&
+        echo 'Cache directories created successfully'
+      "
+    volumes:
+      - nginx_cache:/var/cache/nginx
+    networks:
+      - webapp-network
+
+  # ----------------------------------------------------
   # Nginx サービス: リバースプロキシと静的ファイル配信
   # ----------------------------------------------------
   nginx:
@@ -119,11 +137,13 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - /da/tls:/da/tls:ro
-      # - ./images:/app/images:ro  # 一時的に無効化
-      # - nginx_cache:/var/cache/nginx  # 一時的に無効化
+      - nginx_cache:/var/cache/nginx
+      # - ./images:/app/images:ro  # Phase 3で有効化
     networks:
       - webapp-network
     depends_on:
+      nginx-cache-init:
+        condition: service_completed_successfully
       frontend:
         condition: service_healthy
       backend:
@@ -153,8 +173,8 @@ networks:
     external: true
 
 # ----------------------------------------------------
-# ボリューム定義: データ永続化（一時的に無効化）
+# ボリューム定義: データ永続化
 # ----------------------------------------------------
-# volumes:
-#   nginx_cache:
-#     driver: local
+volumes:
+  nginx_cache:
+    driver: local
