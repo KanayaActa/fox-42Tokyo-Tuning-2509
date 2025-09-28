@@ -2,8 +2,6 @@ package cache
 
 import (
 	"strings"
-	"sync"
-	"time"
 )
 
 // パターンベースでキーを削除する拡張版キャッシュ
