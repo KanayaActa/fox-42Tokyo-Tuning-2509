@@ -176,7 +176,7 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 			args = append(args, req.Search+"%")
 		} else {
 			query += " AND p.name LIKE ?"
-			args = append(args, req.Search+"%")
+			args = append(args, "%"+req.Search+"%")
 		}
 	}
 
