@@ -16,7 +16,7 @@ func NewProductRepository(db DBTX) *ProductRepository {
 // 商品一覧を取得し、SQLでページング処理を行う
 func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req model.ListRequest) ([]model.Product, int, error) {
 	var products []model.Product
-	
+	var total int
 	// まず総件数を取得
 	countQuery := "SELECT COUNT(*) FROM products"
 	countArgs := []interface{}{}
@@ -27,7 +27,7 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 		countArgs = append(countArgs, searchPattern, searchPattern)
 	}
 	
-	var total int
+	
 	err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
 	if err != nil {
 		return nil, 0, err

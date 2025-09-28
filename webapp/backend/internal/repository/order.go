@@ -86,7 +86,8 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 	}
 
 	var total int
-	if err := r.db.GetContext(ctx, &total, countQuery, countArgs...); err != nil {
+	err := r.db.GetContext(ctx, &total, countQuery, countArgs...); 
+	if err != nil {
 		return nil, 0, err
 	}
 
