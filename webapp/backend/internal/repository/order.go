@@ -1,35 +1,87 @@
 package repository
 
 import (
+	"backend/internal/cache"
 	"backend/internal/model"
 	"context"
+	"crypto/md5"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 type OrderRepository struct {
-	db DBTX
+	db    DBTX
+	cache *cache.MemoryCache
 }
 
 func NewOrderRepository(db DBTX) *OrderRepository {
-	return &OrderRepository{db: db}
+	return &OrderRepository{
+		db:    db,
+		cache: cache.NewMemoryCache(),
+	}
 }
 
-// 注文を作成し、生成された注文IDを返す
+// 複数の注文を一括作成し、生成された注文IDのスライスを返す
+func (r *OrderRepository) CreateBatch(ctx context.Context, orders []*model.Order) ([]string, error) {
+	if len(orders) == 0 {
+		return []string{}, nil
+	}
+
+	// バッチINSERT用のクエリを構築
+	query := `INSERT INTO orders (user_id, product_id, shipped_status, created_at) VALUES `
+	placeholders := make([]string, len(orders))
+	args := make([]interface{}, 0, len(orders)*4)
+
+	for i, order := range orders {
+		placeholders[i] = "(?, ?, 'shipping', NOW())"
+		args = append(args, order.UserID, order.ProductID)
+	}
+
+	query += strings.Join(placeholders, ", ")
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	// 最初のIDを取得
+	firstID, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	// 連続するIDのスライスを生成
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	orderIDs := make([]string, rowsAffected)
+	for i := int64(0); i < rowsAffected; i++ {
+		orderIDs[i] = fmt.Sprintf("%d", firstID+i)
+	}
+
+	// 注文が作成されたのでキャッシュを無効化
+	r.invalidateOrderCountCache()
+
+	return orderIDs, nil
+}
+
+// 注文を作成し、生成された注文IDを返す（単一注文用）
 func (r *OrderRepository) Create(ctx context.Context, order *model.Order) (string, error) {
-	query := `INSERT INTO orders (user_id, product_id, shipped_status, created_at) VALUES (?, ?, 'shipping', NOW())`
-	result, err := r.db.ExecContext(ctx, query, order.UserID, order.ProductID)
+	// 単一注文をバッチメソッドで処理
+	orderIDs, err := r.CreateBatch(ctx, []*model.Order{order})
 	if err != nil {
 		return "", err
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return "", err
+	if len(orderIDs) == 0 {
+		return "", fmt.Errorf("no order ID generated")
 	}
-	return fmt.Sprintf("%d", id), nil
+	return orderIDs[0], nil
 }
 
 // 複数の注文IDのステータスを一括で更新
@@ -44,6 +96,12 @@ func (r *OrderRepository) UpdateStatuses(ctx context.Context, orderIDs []int64, 
 	}
 	query = r.db.Rebind(query)
 	_, err = r.db.ExecContext(ctx, query, args...)
+	
+	// ステータスが更新されたのでキャッシュを無効化
+	if err == nil {
+		r.invalidateOrderCountCache()
+	}
+	
 	return err
 }
 
@@ -65,30 +123,41 @@ func (r *OrderRepository) GetShippingOrders(ctx context.Context) ([]model.Order,
 
 // 注文履歴一覧を取得
 func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.ListRequest) ([]model.Order, int, error) {
-	// まず総件数を取得（COUNT(*)を使用）
-	countQuery := `
-        SELECT COUNT(*)
-        FROM orders o
-        JOIN products p ON o.product_id = p.product_id
-        WHERE o.user_id = ?`
+	// キャッシュキーを生成（ユーザーIDと検索条件に基づく）
+	cacheKey := r.generateOrderCountCacheKey(userID, req.Search, req.Type)
 	
-	countArgs := []interface{}{userID}
-	
-	// 検索条件があれば追加
-	if req.Search != "" {
-		if req.Type == "prefix" {
-			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, req.Search+"%")
-		} else {
-			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, "%"+req.Search+"%")
-		}
-	}
-
+	// キャッシュから総件数を試行
 	var total int
-	err := r.db.GetContext(ctx, &total, countQuery, countArgs...); 
-	if err != nil {
-		return nil, 0, err
+	if cachedTotal, found := r.cache.Get(cacheKey); found {
+		total = cachedTotal.(int)
+	} else {
+		// キャッシュにない場合はDBから取得
+		countQuery := `
+	        SELECT COUNT(*)
+	        FROM orders o
+	        JOIN products p ON o.product_id = p.product_id
+	        WHERE o.user_id = ?`
+		
+		countArgs := []interface{}{userID}
+		
+		// 検索条件があれば追加
+		if req.Search != "" {
+			if req.Type == "prefix" {
+				countQuery += " AND p.name LIKE ?"
+				countArgs = append(countArgs, req.Search+"%")
+			} else {
+				countQuery += " AND p.name LIKE ?"
+				countArgs = append(countArgs, "%"+req.Search+"%")
+			}
+		}
+
+		
+		if err := r.db.GetContext(ctx, &total, countQuery, countArgs...); err != nil {
+			return nil, 0, err
+		}
+		
+		// 結果をキャッシュに保存（注文データは頻繁に変更される可能性があるため5秒間有効）
+		r.cache.Set(cacheKey, total, 5*time.Second)
 	}
 
 	// メインクエリ
@@ -157,4 +226,30 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 	}
 
 	return orders, total, nil
+}
+
+// 注文件数キャッシュキーを生成する
+func (r *OrderRepository) generateOrderCountCacheKey(userID int, search, searchType string) string {
+	if search == "" {
+		return fmt.Sprintf("order_count:user:%d:all", userID)
+	}
+	
+	// 検索条件をハッシュ化してキーに含める
+	searchKey := fmt.Sprintf("%s:%s", searchType, search)
+	hash := md5.Sum([]byte(searchKey))
+	return fmt.Sprintf("order_count:user:%d:search:%x", userID, hash)
+}
+
+// 注文データが更新された際にキャッシュを無効化する
+func (r *OrderRepository) invalidateOrderCountCache() {
+	// 注文関連のキャッシュを削除
+	// 実装を簡単にするため、今回はキャッシュ全体をクリア
+	r.cache = cache.NewMemoryCache()
+}
+
+// 特定ユーザーの注文キャッシュのみを無効化する（より細かい制御が必要な場合）
+func (r *OrderRepository) InvalidateUserOrderCountCache(userID int) {
+	// より効率的な実装では、ユーザー別のキーのみを削除
+	// 現在の実装では全体をクリアしているが、将来的に改善可能
+	r.invalidateOrderCountCache()
 }
