@@ -62,3 +62,24 @@ CREATE TABLE `user_sessions` (
   UNIQUE KEY `session_uuid` (`session_uuid`),
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
+
+-- ===========================================
+-- パフォーマンス最適化用インデックス
+-- ===========================================
+
+-- JOIN用インデックス
+CREATE INDEX idx_orders_user_product ON orders(user_id, product_id);
+CREATE INDEX idx_orders_product_id ON orders(product_id);
+
+-- 並び替え用複合インデックス
+CREATE INDEX idx_orders_user_created ON orders(user_id, created_at, order_id);
+CREATE INDEX idx_orders_user_status ON orders(user_id, shipped_status, order_id);
+CREATE INDEX idx_orders_user_arrived ON orders(user_id, arrived_at, order_id);
+
+-- 商品名検索用インデックス（前方一致用）
+CREATE INDEX idx_products_name ON products(name);
+
+-- 部分検索用FULLTEXTインデックス（ngramパーサー）
+-- 注意: ngram_token_size=2 に設定が必要
+ALTER TABLE products ADD FULLTEXT INDEX ft_products_name (name) WITH PARSER ngram;
+ALTER TABLE products ADD FULLTEXT INDEX ft_products_name_desc (name, description) WITH PARSER ngram;
