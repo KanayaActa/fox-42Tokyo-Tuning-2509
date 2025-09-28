@@ -63,58 +63,79 @@ func (r *OrderRepository) GetShippingOrders(ctx context.Context) ([]model.Order,
 	return orders, err
 }
 
-// 注文履歴一覧を取得
+// 注文履歴一覧を取得（最適化版）
 func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.ListRequest) ([]model.Order, int, error) {
-	// まず総件数を取得（COUNT(*)を使用）
-	countQuery := `
-        SELECT COUNT(*)
-        FROM orders o
-        JOIN products p ON o.product_id = p.product_id
-        WHERE o.user_id = ?`
-	
-	countArgs := []interface{}{userID}
-	
-	// 検索条件があれば追加
-	if req.Search != "" {
-		if req.Type == "prefix" {
+	var total int
+	var countQuery string
+	var countArgs []interface{}
+	var query string
+	var args []interface{}
+
+	// 検索条件に応じて最適化されたクエリを選択
+	if req.Search != "" && req.Type != "prefix" {
+		// 部分検索: FULLTEXT検索を使用
+		countQuery = `
+            SELECT COUNT(*)
+            FROM orders o
+            JOIN (
+                SELECT product_id
+                FROM products
+                WHERE MATCH(name) AGAINST (? IN BOOLEAN MODE)
+            ) p ON o.product_id = p.product_id
+            WHERE o.user_id = ?`
+		countArgs = []interface{}{req.Search, userID}
+
+		query = `
+            SELECT o.order_id, o.product_id, p2.name as product_name, o.shipped_status, o.created_at, o.arrived_at
+            FROM orders o
+            JOIN (
+                SELECT product_id
+                FROM products
+                WHERE MATCH(name) AGAINST (? IN BOOLEAN MODE)
+            ) p ON o.product_id = p.product_id
+            JOIN products p2 ON p2.product_id = o.product_id
+            WHERE o.user_id = ?`
+		args = []interface{}{req.Search, userID}
+	} else {
+		// 前方一致検索または検索なし: 従来のLIKE検索
+		countQuery = `
+            SELECT COUNT(*)
+            FROM orders o
+            JOIN products p ON o.product_id = p.product_id
+            WHERE o.user_id = ?`
+		countArgs = []interface{}{userID}
+
+		query = `
+            SELECT o.order_id, o.product_id, p.name as product_name, o.shipped_status, o.created_at, o.arrived_at
+            FROM orders o
+            JOIN products p ON o.product_id = p.product_id
+            WHERE o.user_id = ?`
+		args = []interface{}{userID}
+
+		// 前方一致検索条件を追加
+		if req.Search != "" && req.Type == "prefix" {
 			countQuery += " AND p.name LIKE ?"
 			countArgs = append(countArgs, req.Search+"%")
-		} else {
-			countQuery += " AND p.name LIKE ?"
-			countArgs = append(countArgs, "%"+req.Search+"%")
+			query += " AND p.name LIKE ?"
+			args = append(args, req.Search+"%")
 		}
 	}
 
-	var total int
-	err := r.db.GetContext(ctx, &total, countQuery, countArgs...); 
+	// 総件数を取得
+	err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// メインクエリ
-	query := `
-        SELECT o.order_id, o.product_id, p.name as product_name, o.shipped_status, o.created_at, o.arrived_at
-        FROM orders o
-        JOIN products p ON o.product_id = p.product_id
-        WHERE o.user_id = ?`
-	
-	args := []interface{}{userID}
-	
-	// 検索条件があれば追加
-	if req.Search != "" {
-		if req.Type == "prefix" {
-			query += " AND p.name LIKE ?"
-			args = append(args, req.Search+"%")
-		} else {
-			query += " AND p.name LIKE ?"
-			args = append(args, "%"+req.Search+"%")
-		}
-	}
-
-	// ソート処理
+	// ソート処理（最適化版）
 	switch req.SortField {
 	case "product_name":
-		query += " ORDER BY p.name " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
+		if req.Search != "" && req.Type != "prefix" {
+			// FULLTEXT検索の場合はp2.nameを使用
+			query += " ORDER BY p2.name " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
+		} else {
+			query += " ORDER BY p.name " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
+		}
 	case "created_at":
 		query += " ORDER BY o.created_at " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
 	case "shipped_status":
@@ -158,3 +179,4 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 
 	return orders, total, nil
 }
+

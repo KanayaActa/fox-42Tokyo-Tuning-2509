@@ -13,37 +13,44 @@ func NewProductRepository(db DBTX) *ProductRepository {
 	return &ProductRepository{db: db}
 }
 
-// 商品一覧を取得し、SQLでページング処理を行う
+// 商品一覧を取得し、SQLでページング処理を行う（最適化版）
 func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req model.ListRequest) ([]model.Product, int, error) {
 	var products []model.Product
 	var total int
-	// まず総件数を取得
-	countQuery := "SELECT COUNT(*) FROM products"
-	countArgs := []interface{}{}
-	
+	var countQuery string
+	var countArgs []interface{}
+	var baseQuery string
+	var args []interface{}
+
+	// 検索条件に応じて最適化されたクエリを選択
 	if req.Search != "" {
-		countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := "%" + req.Search + "%"
-		countArgs = append(countArgs, searchPattern, searchPattern)
+		// FULLTEXT検索を使用（nameとdescriptionの両方を検索）
+		countQuery = `
+			SELECT COUNT(*)
+			FROM products
+			WHERE MATCH(name, description) AGAINST (? IN BOOLEAN MODE)`
+		countArgs = []interface{}{req.Search}
+
+		baseQuery = `
+			SELECT product_id, name, value, weight, image, description
+			FROM products
+			WHERE MATCH(name, description) AGAINST (? IN BOOLEAN MODE)`
+		args = []interface{}{req.Search}
+	} else {
+		// 検索なし
+		countQuery = "SELECT COUNT(*) FROM products"
+		countArgs = []interface{}{}
+
+		baseQuery = `
+			SELECT product_id, name, value, weight, image, description
+			FROM products`
+		args = []interface{}{}
 	}
-	
-	
+
+	// 総件数を取得
 	err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
 	if err != nil {
 		return nil, 0, err
-	}
-	
-	// データを取得（プレースホルダーを使用してSQLインジェクションを防止）
-	baseQuery := `
-		SELECT product_id, name, value, weight, image, description
-		FROM products
-	`
-	args := []interface{}{}
-
-	if req.Search != "" {
-		baseQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := "%" + req.Search + "%"
-		args = append(args, searchPattern, searchPattern)
 	}
 
 	// ソートフィールドのバリデーション（SQLインジェクション防止）
