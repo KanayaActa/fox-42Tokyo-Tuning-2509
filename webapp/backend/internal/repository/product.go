@@ -1,36 +1,55 @@
 package repository
 
 import (
+	"backend/internal/cache"
 	"backend/internal/model"
 	"context"
+	"crypto/md5"
+	"fmt"
+	"time"
 )
 
 type ProductRepository struct {
-	db DBTX
+	db    DBTX
+	cache *cache.MemoryCache
 }
 
 func NewProductRepository(db DBTX) *ProductRepository {
-	return &ProductRepository{db: db}
+	return &ProductRepository{
+		db:    db,
+		cache: cache.NewMemoryCache(),
+	}
 }
 
 // 商品一覧を取得し、SQLでページング処理を行う
 func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req model.ListRequest) ([]model.Product, int, error) {
 	var products []model.Product
 	
-	// まず総件数を取得
-	countQuery := "SELECT COUNT(*) FROM products"
-	countArgs := []interface{}{}
+	// キャッシュキーを生成（検索条件に基づく）
+	cacheKey := r.generateCountCacheKey(req.Search)
 	
-	if req.Search != "" {
-		countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := "%" + req.Search + "%"
-		countArgs = append(countArgs, searchPattern, searchPattern)
-	}
-	
+	// キャッシュから総件数を試行
 	var total int
-	err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
-	if err != nil {
-		return nil, 0, err
+	if cachedTotal, found := r.cache.Get(cacheKey); found {
+		total = cachedTotal.(int)
+	} else {
+		// キャッシュにない場合はDBから取得
+		countQuery := "SELECT COUNT(*) FROM products"
+		countArgs := []interface{}{}
+		
+		if req.Search != "" {
+			countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
+			searchPattern := "%" + req.Search + "%"
+			countArgs = append(countArgs, searchPattern, searchPattern)
+		}
+		
+		err := r.db.GetContext(ctx, &total, countQuery, countArgs...)
+		if err != nil {
+			return nil, 0, err
+		}
+		
+		// 結果をキャッシュに保存（10秒間有効）
+		r.cache.Set(cacheKey, total, 10*time.Second)
 	}
 	
 	// データを取得（プレースホルダーを使用してSQLインジェクションを防止）
@@ -72,4 +91,22 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 	}
 
 	return products, total, nil
+}
+
+// キャッシュキーを生成する（検索条件に基づく）
+func (r *ProductRepository) generateCountCacheKey(search string) string {
+	if search == "" {
+		return "product_count:all"
+	}
+	
+	// 検索条件をハッシュ化してキーに含める
+	hash := md5.Sum([]byte(search))
+	return fmt.Sprintf("product_count:search:%x", hash)
+}
+
+// 商品データが更新された際にキャッシュを無効化する
+func (r *ProductRepository) InvalidateCountCache() {
+	// 全てのカウントキャッシュを削除
+	// 実装を簡単にするため、今回はキャッシュ全体をクリア
+	r.cache = cache.NewMemoryCache()
 }
