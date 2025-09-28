@@ -180,14 +180,22 @@ func (r *OrderRepository) ListOrders(ctx context.Context, userID int, req model.
 		}
 	}
 
-	// ソート処理
+	// ソート処理（インデックス最適化版）
 	switch req.SortField {
 	case "product_name":
+		// idx_products_name_id インデックスを活用
 		query += " ORDER BY p.name " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
 	case "created_at":
-		query += " ORDER BY o.created_at " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
+		// idx_orders_user_created インデックスを活用
+		if strings.ToUpper(req.SortOrder) == "DESC" {
+			query += " ORDER BY o.created_at DESC, o.order_id ASC"
+		} else {
+			// ASCの場合はfilesortが発生するが、キャッシュで高速化
+			query += " ORDER BY o.created_at ASC, o.order_id ASC"
+		}
 	case "shipped_status":
-		query += " ORDER BY o.shipped_status " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
+		// idx_orders_user_status_created インデックスを活用
+		query += " ORDER BY o.shipped_status " + strings.ToUpper(req.SortOrder) + ", o.created_at DESC, o.order_id ASC"
 	case "arrived_at":
 		query += " ORDER BY o.arrived_at " + strings.ToUpper(req.SortOrder) + ", o.order_id ASC"
 	case "order_id":
