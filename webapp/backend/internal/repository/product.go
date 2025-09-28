@@ -23,7 +23,7 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 	
 	if req.Search != "" {
 		countQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := req.Search + "%"
+		searchPattern := "%" + req.Search + "%"
 		countArgs = append(countArgs, searchPattern, searchPattern)
 	}
 	
@@ -42,7 +42,7 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 
 	if req.Search != "" {
 		baseQuery += " WHERE (name LIKE ? OR description LIKE ?)"
-		searchPattern := req.Search + "%"
+		searchPattern := "%" + req.Search + "%"
 		args = append(args, searchPattern, searchPattern)
 	}
 
