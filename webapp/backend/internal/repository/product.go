@@ -85,7 +85,7 @@ func (r *ProductRepository) ListProducts(ctx context.Context, userID int, req mo
 	baseQuery += " ORDER BY " + req.SortField + " " + req.SortOrder + ", product_id ASC LIMIT ? OFFSET ?"
 	args = append(args, req.PageSize, req.Offset)
 
-	err = r.db.SelectContext(ctx, &products, baseQuery, args...)
+	err := r.db.SelectContext(ctx, &products, baseQuery, args...)
 	if err != nil {
 		return nil, 0, err
 	}
