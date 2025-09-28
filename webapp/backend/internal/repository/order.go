@@ -73,15 +73,16 @@ func (r *OrderRepository) CreateBatch(ctx context.Context, orders []*model.Order
 
 // 注文を作成し、生成された注文IDを返す（単一注文用）
 func (r *OrderRepository) Create(ctx context.Context, order *model.Order) (string, error) {
-	// 単一注文をバッチメソッドで処理
-	orderIDs, err := r.CreateBatch(ctx, []*model.Order{order})
+	query := `INSERT INTO orders (user_id, product_id, shipped_status, created_at) VALUES (?, ?, 'shipping', NOW())`
+	result, err := r.db.ExecContext(ctx, query, order.UserID, order.ProductID)
 	if err != nil {
 		return "", err
 	}
-	if len(orderIDs) == 0 {
-		return "", fmt.Errorf("no order ID generated")
+	id, err := result.LastInsertId()
+	if err != nil {
+		return "", err
 	}
-	return orderIDs[0], nil
+	return fmt.Sprintf("%d", id), nil
 }
 
 // 複数の注文IDのステータスを一括で更新
